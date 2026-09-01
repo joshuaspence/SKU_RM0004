@@ -308,7 +308,13 @@ void lcd_display_ram(void)
     uint8_t free[10] = {0};
     uint8_t residueStr[10] = {0};
     get_cpu_memory(&Totalram, &freeram);
-    residue = (Totalram - freeram) / Totalram * 100;
+    /* get_cpu_memory() leaves the total at zero if /proc/meminfo cannot be
+       read. Dividing by it yields NaN, and converting NaN to an integer is
+       undefined behaviour rather than a harmless zero. */
+    if (Totalram > 0.0)
+    {
+        residue = (Totalram - freeram) / Totalram * 100;
+    }
     sprintf(residueStr, "%d", residue);
     lcd_fill_rectangle(0, 35, ST7735_WIDTH, 20, ST7735_BLACK);
     lcd_write_string(36, 35, "RAM:", Font_11x18, ST7735_WHITE, ST7735_BLACK);
