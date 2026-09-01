@@ -20,8 +20,7 @@ int main(void)
 	while(1)
 	{
 		lcd_display(symbol);
-		sleep(1);
-        sleep(1);
+		sleep(2);
 		symbol++;
 		if(symbol==4)
         {
