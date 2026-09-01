@@ -4,6 +4,9 @@
 file_path="/etc/systemd/system/"
 service_name="uctronics-display.service"
 exe_path=$(pwd)/"display"
+cli_path=$(pwd)/"display-cli"
+cli_link="/usr/local/bin/display-cli"
+message_dir="/var/lib/uctronics-display"
 
 version=$(cat /etc/os-release | grep "VERSION_ID" | awk -F= '{print $2}' | tr -d '"')
 MODEL=$(cat /proc/device-tree/model)
@@ -36,9 +39,23 @@ EOF
 }
 
 
+install_display_cli() {
+    echo Put display-cli on the PATH at "$cli_link".
+    sudo ln -sf "$cli_path" "$cli_link"
+
+    # The display only ever reads the message file, and root can read
+    # anything, so this directory belongs to whoever deployed the service.
+    # That is what lets display-cli be run without sudo.
+    owner=${SUDO_USER:-$(id -un)}
+    sudo mkdir -p "$message_dir"
+    sudo chown "$owner" "$message_dir"
+    echo "$message_dir" is owned by "$owner"; display-cli needs no sudo.
+}
+
 install_service() {
     if [ -e "Makefile" ]; then
         make clean && make
+        install_display_cli
         deploy_function_service
         # Check if the deployment was successful
         if [ $? -eq 0 ]; then
