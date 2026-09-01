@@ -8,6 +8,9 @@ UCTRONICS = cdll.LoadLibrary('./librm0004_display.so')  #The directory where the
 if __name__ == '__main__':
     if UCTRONICS.lcd_begin() > 0:
         sys.exit(0)
+    # Background, separator and header. Drawn once; lcd_display() only
+    # repaints the reading below them.
+    UCTRONICS.lcd_display_layout()
     switch_flag = 0
     while True:
         UCTRONICS.lcd_display(switch_flag)
