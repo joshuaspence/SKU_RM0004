@@ -21,6 +21,9 @@
 
 int i2cd = -1;
 
+/* Pixels in the largest glyph any of the fonts provides, 16x26. */
+#define GLYPH_MAX_PIXELS (16 * 26)
+
 /* Burst helpers, defined with the rest of the i2c code further down. */
 static void i2c_burst_begin(void);
 static void i2c_burst_end(void);
@@ -43,9 +46,21 @@ void lcd_set_address_window(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1)
 
 /*
  * Display a single character
+ *
+ * The glyph is assembled in memory and sent as one burst, rather than a
+ * separate three byte i2c transaction per pixel. The pixels are the same
+ * either way; this is only how they reach the panel.
+ *
+ * The per-pixel form cost an 11x18 glyph 198 transactions, each carrying a
+ * register byte the burst does not need, and each followed by a usleep(10)
+ * that in practice takes nearer 80us because that is the granularity the
+ * timer can offer.
  */
 void lcd_write_char(uint16_t x, uint16_t y, char ch, FontDef font, uint16_t color, uint16_t bgcolor)
 {
+    /* The largest font is 16x26, at two bytes per pixel. */
+    uint8_t buff[GLYPH_MAX_PIXELS * 2];
+    uint32_t index = 0;
     uint32_t i, b, j;
 
     lcd_set_address_window(x, y, x + font.width - 1, y + font.height - 1);
@@ -55,16 +70,12 @@ void lcd_write_char(uint16_t x, uint16_t y, char ch, FontDef font, uint16_t colo
         b = font.data[(ch - 32) * font.height + i];
         for (j = 0; j < font.width; j++)
         {
-            if ((b << j) & 0x8000)
-            {
-                i2c_write_data(color >> 8, color & 0xFF);
-            }
-            else
-            {
-                i2c_write_data(bgcolor >> 8, bgcolor & 0xFF);
-            }
+            uint16_t pixel = ((b << j) & 0x8000) ? color : bgcolor;
+            buff[index++] = (uint8_t)(pixel >> 8);
+            buff[index++] = (uint8_t)(pixel & 0xFF);
         }
     }
+    i2c_burst_transfer(buff, index);
 }
 
 void lcd_write_ch(uint16_t x, uint16_t y, char ch, FontType font, uint16_t color, uint16_t bgcolor)
@@ -111,8 +122,8 @@ void lcd_write_string(uint16_t x, uint16_t y, char *str, FontDef font, uint16_t 
             }
         }
 
+        /* No sync here: lcd_write_char() ends its burst with one. */
         lcd_write_char(x, y, *str, font, color, bgcolor);
-        i2c_write_command(SYNC_REG, 0x00, 0x01);
         x += font.width;
         str++;
     }
