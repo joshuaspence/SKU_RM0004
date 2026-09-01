@@ -344,12 +344,8 @@ static void lcd_display_metric(char *label, uint8_t value, char *unit,
  * Draw the top line: the message set through display-cli if one is set,
  * and otherwise the address or fixed string that was shown before.
  *
- * Only lcd_display_cpuLoad() repaints the whole screen, so this line
- * survives the other three screens' partial repaints. That is what lets it
- * be redrawn on its own when the message changes mid-cycle, rather than
- * the change waiting for the rotation to come back round. The row is
- * cleared first, because a shorter message would otherwise leave the tail
- * of the previous one behind.
+ * Nothing else touches this row, so it persists across screen changes and
+ * is only rewritten when its content actually differs.
  */
 void lcd_display_header(void)
 {
@@ -393,13 +389,26 @@ void lcd_display_header(void)
     lcd_write_string(0, HEADER_ROW_Y, padded, Font_8x16, ST7735_WHITE, ST7735_BLACK);
 }
 
+/*
+ * Paint the parts of the screen that never change: the background and the
+ * separator under the header. Call once, before the first reading.
+ *
+ * This used to happen inside lcd_display_cpuLoad(), so every rotation back
+ * to the CPU screen blanked the whole display and built it up again. That
+ * cost 12800 pixels of fill plus a header repaint, and showed as the
+ * screen going dark and refilling once every four screens.
+ */
+void lcd_display_layout(void)
+{
+    lcd_fill_screen(ST7735_BLACK);
+    lcd_fill_rectangle(0, 20, ST7735_WIDTH, 5, ST7735_BLUE);
+    lcd_display_header();
+}
+
 void lcd_display_cpuLoad(void)
 {
     uint8_t cpuLoad = get_cpu_message();
 
-    lcd_fill_screen(ST7735_BLACK);
-    lcd_fill_rectangle(0, 20, ST7735_WIDTH, 5, ST7735_BLUE);
-    lcd_display_header();
     lcd_display_metric("CPU:", cpuLoad, "%", cpuLoad, ST7735_GREEN);
 }
 
