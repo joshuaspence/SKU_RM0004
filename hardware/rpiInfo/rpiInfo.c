@@ -112,54 +112,112 @@ char* get_ip_address_new(void)
 
 
 
+/* Longest "Key:" we look for, plus room for the terminator. */
+#define PROC_KEY_MAX 64
+
+typedef struct
+{
+  const char *key;  /* including the trailing colon, as /proc writes it */
+  uint64_t value;   /* filled in when the key is found                  */
+  int found;
+} ProcField;
+
+/*
+* Read "Key: value" lines from a /proc file, filling in every requested
+* field in a single pass. Returns the number of fields found, or -1 if the
+* file could not be opened.
+*
+* Scanning stops as soon as every field has been seen, so asking for keys
+* that appear near the top of the file costs only those lines.
+*/
+static int read_proc_fields(const char *path, ProcField *fields, size_t count)
+{
+  FILE *fp = NULL;
+  char line[256];
+  char name[PROC_KEY_MAX];
+  unsigned long long value = 0;
+  size_t index = 0;
+  int found = 0;
+
+  for (index = 0; index < count; index++)
+  {
+    fields[index].value = 0;
+    fields[index].found = 0;
+  }
+
+  fp = fopen(path, "r");
+  if (fp == NULL)
+  {
+    return -1;
+  }
+
+  while (found < (int)count && fgets(line, sizeof(line), fp) != NULL)
+  {
+    /* The conversion is width-limited. The set of keys we ask for is
+       fixed, but the file contents are not, and a bare %s would write
+       past `name` on a longer line than we expect. */
+    if (sscanf(line, "%63s %llu", name, &value) != 2)
+    {
+      continue;
+    }
+    for (index = 0; index < count; index++)
+    {
+      if (!fields[index].found && strcmp(name, fields[index].key) == 0)
+      {
+        fields[index].value = (uint64_t)value;
+        fields[index].found = 1;
+        found++;
+        break;
+      }
+    }
+  }
+
+  fclose(fp);
+  return found;
+}
+
 /*
 * get ram memory
+*
+* Totals are reported in GiB. /proc/meminfo counts kibibytes, despite
+* labelling them "kB".
+*
+* /proc/meminfo is the only source for this: sysinfo(2) has no
+* MemAvailable equivalent, and its freeram field is MemFree by another
+* name.
 */
 void get_cpu_memory(float *Totalram,float *freeram)
 {
-  unsigned int value=0;
-  unsigned char buffer[100]={0};
-  unsigned char famer[100]={0};
-  float memFree=0.0;
-  int haveAvailable=0;
+  ProcField fields[3];
 
-    FILE* fp=fopen("/proc/meminfo","r");
-    if(fp==NULL)
-    {
-        return ;
-    }
-    while(fgets(buffer,sizeof(buffer),fp))
-    {
-        if(sscanf(buffer,"%s%u",famer,&value)!=2)
-        {
-        continue;
-        }
-        if(strcmp(famer,"MemTotal:")==0)
-        {
-         *Totalram=value/1000.0/1000.0;
-        }
-        /* MemAvailable is the kernel's own estimate of what a new workload
-           could claim without swapping. MemFree is not a substitute: it
-           excludes the reclaimable page cache that Linux deliberately fills
-           with every spare page, so a healthy machine reads as nearly full.
-           On a 32G host MemFree reports 90% used where MemAvailable
-           reports 50%. */
-        else if(strcmp(famer,"MemAvailable:")==0)
-        {
-          *freeram=value/1000.0/1000.0;
-          haveAvailable=1;
-        }
-        else if(strcmp(famer,"MemFree:")==0)
-        {
-          memFree=value/1000.0/1000.0;
-        }
-    }
-    fclose(fp);
-    /* Kernels older than 3.14 do not publish MemAvailable. */
-    if(!haveAvailable)
-    {
-      *freeram=memFree;
-    }
+  fields[0].key = "MemTotal:";
+  fields[1].key = "MemAvailable:";
+  fields[2].key = "MemFree:";
+
+  *Totalram = 0.0;
+  *freeram = 0.0;
+
+  if (read_proc_fields("/proc/meminfo", fields, 3) < 0 || !fields[0].found)
+  {
+    return;
+  }
+
+  *Totalram = fields[0].value / (float)(1024 * 1024);
+  /* MemAvailable is the kernel's own estimate of what a new workload could
+     claim without swapping. MemFree is not a substitute: it excludes the
+     reclaimable page cache that Linux deliberately fills with every spare
+     page, so a healthy machine reads as nearly full. On a 32G host MemFree
+     reports 90% used where MemAvailable reports 50%.
+
+     Kernels older than 3.14 do not publish MemAvailable. */
+  if (fields[1].found)
+  {
+    *freeram = fields[1].value / (float)(1024 * 1024);
+  }
+  else
+  {
+    *freeram = fields[2].value / (float)(1024 * 1024);
+  }
 }
 
 /* Upper bound on the number of distinct filesystems we will total up. */
