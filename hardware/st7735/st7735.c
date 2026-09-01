@@ -256,18 +256,20 @@ void lcd_display_percentage(uint8_t val, uint16_t color)
 {
     uint8_t count = 0;
     uint8_t xCoordinate = 30;
-    val += 10;
-    if (val >= 100)
+    /* Round up, so any non-zero reading lights at least one segment, but
+       leave the bar empty at exactly zero. Adding 10 before dividing, as
+       this did previously, lit a segment at 0%. */
+    uint8_t bars = (uint8_t)((val + 9) / 10);
+    if (bars > 10)
     {
-        val = 100;
+        bars = 10;
     }
-    val /= 10;
-    for (count = 0; count < val; count++)
+    for (count = 0; count < bars; count++)
     {
         lcd_fill_rectangle(xCoordinate, 60, 6, 10, color);
         xCoordinate += 10;
     }
-    for (count = 0; count < 10 - val; count++)
+    for (count = 0; count < 10 - bars; count++)
     {
         lcd_fill_rectangle(xCoordinate, 60, 6, 10, ST7735_GRAY);
         xCoordinate += 10;
