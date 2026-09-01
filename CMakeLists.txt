@@ -5,6 +5,7 @@ PROJECT(LIBRM0004_DISPLAY)
 include_directories(SYSTEM  hardware/rpiInfo hardware/st7735)
 
 SET(LIBRM0004_DISPLAY_SRC hardware/rpiInfo/rpiInfo.c
+    hardware/rpiInfo/message.c
     hardware/st7735/st7735.c
     hardware/st7735/fonts.c)
 
