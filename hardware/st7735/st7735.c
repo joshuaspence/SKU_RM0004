@@ -300,6 +300,35 @@ void i2c_burst_transfer(uint8_t *buff, uint32_t length)
     i2c_burst_end();
 }
 
+/* The header line, drawn in the 8x16 font above the blue separator. */
+#define HEADER_ROW_Y 0
+/* The 8x16 font fits 19 characters across the 160 pixel display. Padding
+   the header to that width lets one write cover the whole row, so it never
+   has to be blanked first. */
+#define HEADER_TEXT_COLUMNS 19
+#define HEADER_TEXT_MAX (HEADER_TEXT_COLUMNS + 1)
+
+/* Segments in the bar graph. */
+#define BAR_SEGMENTS 10
+
+/*
+ * What the panel is currently showing.
+ *
+ * These let a redraw be skipped when it would change nothing, which is
+ * most of the time. They are only true for as long as nobody paints over
+ * the areas they describe, so lcd_display_layout() clears them: after the
+ * screen has been filled, nothing is on it whatever these last recorded.
+ */
+static char headerDrawn[HEADER_TEXT_MAX] = {0};
+static int headerPainted = 0;
+static uint16_t metricDrawnX = 0;
+static uint16_t metricDrawnWidth = 0;
+static void lcd_display_invalidate(void)
+{
+    headerPainted = 0;
+    metricDrawnWidth = 0;
+}
+
 void lcd_display(uint8_t symbol)
 {
     switch (symbol)
@@ -329,29 +358,22 @@ void lcd_display_percentage(uint8_t val, uint16_t color)
        leave the bar empty at exactly zero. Adding 10 before dividing, as
        this did previously, lit a segment at 0%. */
     uint8_t bars = (uint8_t)((val + 9) / 10);
-    if (bars > 10)
+    if (bars > BAR_SEGMENTS)
     {
-        bars = 10;
+        bars = BAR_SEGMENTS;
     }
+
     for (count = 0; count < bars; count++)
     {
         lcd_fill_rectangle(xCoordinate, 60, 6, 10, color);
         xCoordinate += 10;
     }
-    for (count = 0; count < 10 - bars; count++)
+    for (count = 0; count < BAR_SEGMENTS - bars; count++)
     {
         lcd_fill_rectangle(xCoordinate, 60, 6, 10, ST7735_GRAY);
         xCoordinate += 10;
     }
 }
-
-/* The header line, drawn in the 8x16 font above the blue separator. */
-#define HEADER_ROW_Y 0
-/* The 8x16 font fits 19 characters across the 160 pixel display. Padding
-   the header to that width lets one write cover the whole row, so it never
-   has to be blanked first. */
-#define HEADER_TEXT_COLUMNS 19
-#define HEADER_TEXT_MAX (HEADER_TEXT_COLUMNS + 1)
 
 /* The value field is sized for "100", the widest reading any metric
    produces, plus one character for the unit that follows it. */
@@ -381,10 +403,6 @@ void lcd_display_percentage(uint8_t val, uint16_t color)
 static void lcd_display_metric(char *label, uint8_t value, char *unit,
                                uint8_t barValue, uint16_t color)
 {
-    /* Span the row on display currently occupies, so the next one knows
-       what it has to erase. */
-    static uint16_t drawnX = 0;
-    static uint16_t drawnWidth = 0;
     char row[24] = {0};
     uint16_t charWidth = Font_11x18.width;
     uint16_t rowWidth = 0;
@@ -404,14 +422,14 @@ static void lcd_display_metric(char *label, uint8_t value, char *unit,
        row, so whatever the previous row did not cover is already
        background. Three of the four transitions in the rotation are
        between rows of equal width and now clear nothing at all. */
-    if (drawnWidth > 0)
+    if (metricDrawnWidth > 0)
     {
-        uint16_t drawnEnd = (uint16_t)(drawnX + drawnWidth);
+        uint16_t drawnEnd = (uint16_t)(metricDrawnX + metricDrawnWidth);
         uint16_t rowEnd = (uint16_t)(labelX + rowWidth);
 
-        if (drawnX < labelX)
+        if (metricDrawnX < labelX)
         {
-            lcd_fill_rectangle(drawnX, METRIC_ROW_Y, (uint16_t)(labelX - drawnX),
+            lcd_fill_rectangle(metricDrawnX, METRIC_ROW_Y, (uint16_t)(labelX - metricDrawnX),
                                METRIC_ROW_HEIGHT, ST7735_BLACK);
         }
         if (drawnEnd > rowEnd)
@@ -420,8 +438,8 @@ static void lcd_display_metric(char *label, uint8_t value, char *unit,
                                METRIC_ROW_HEIGHT, ST7735_BLACK);
         }
     }
-    drawnX = labelX;
-    drawnWidth = rowWidth;
+    metricDrawnX = labelX;
+    metricDrawnWidth = rowWidth;
     lcd_write_string(labelX, METRIC_ROW_Y, row, Font_11x18, ST7735_WHITE, ST7735_BLACK);
     lcd_display_percentage(barValue, color);
 }
@@ -435,8 +453,6 @@ static void lcd_display_metric(char *label, uint8_t value, char *unit,
  */
 void lcd_display_header(void)
 {
-    static char drawn[HEADER_TEXT_MAX] = {0};
-    static int painted = 0;
     char message[DISPLAY_MESSAGE_MAX] = {0};
     char iPSource[IP_ADDRESS_LENGTH] = {0};
     char text[HEADER_TEXT_MAX] = {0};
@@ -459,12 +475,12 @@ void lcd_display_header(void)
     /* Nothing to do when the line already says this. Cheap enough to call
        every refresh, which is what lets an address change be noticed
        rather than only a message change. */
-    if (painted && strcmp(text, drawn) == 0)
+    if (headerPainted && strcmp(text, headerDrawn) == 0)
     {
         return;
     }
-    strcpy(drawn, text);
-    painted = 1;
+    strcpy(headerDrawn, text);
+    headerPainted = 1;
 
     /* Padded to the full width and written in one pass. lcd_write_char
        paints the background colour for unset pixels, so the text erases
@@ -487,6 +503,7 @@ void lcd_display_header(void)
 void lcd_display_layout(void)
 {
     lcd_fill_screen(ST7735_BLACK);
+    lcd_display_invalidate();
     lcd_fill_rectangle(0, 20, ST7735_WIDTH, 5, ST7735_BLUE);
     lcd_display_header();
 }
