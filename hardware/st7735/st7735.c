@@ -381,6 +381,10 @@ void lcd_display_percentage(uint8_t val, uint16_t color)
 static void lcd_display_metric(char *label, uint8_t value, char *unit,
                                uint8_t barValue, uint16_t color)
 {
+    /* Span the row on display currently occupies, so the next one knows
+       what it has to erase. */
+    static uint16_t drawnX = 0;
+    static uint16_t drawnWidth = 0;
     char row[24] = {0};
     uint16_t charWidth = Font_11x18.width;
     uint16_t rowWidth = 0;
@@ -393,16 +397,31 @@ static void lcd_display_metric(char *label, uint8_t value, char *unit,
         labelX = (uint16_t)((ST7735_WIDTH - rowWidth) / 2);
     }
 
-    /* Only the margins are cleared, for when a wider row preceded this
-       one. They hold nothing but background, so black over black is
-       invisible and costs no perceptible time. */
-    if (labelX > 0)
+    /* Clear only what the previous row covered and this one will not.
+       Clearing both margins outright meant repainting 1440 pixels of
+       background on every screen change, black over black, which cost
+       more of the change than the bar did. Nothing else draws in this
+       row, so whatever the previous row did not cover is already
+       background. Three of the four transitions in the rotation are
+       between rows of equal width and now clear nothing at all. */
+    if (drawnWidth > 0)
     {
-        lcd_fill_rectangle(0, METRIC_ROW_Y, labelX, METRIC_ROW_HEIGHT, ST7735_BLACK);
-        lcd_fill_rectangle((uint16_t)(labelX + rowWidth), METRIC_ROW_Y,
-                           (uint16_t)(ST7735_WIDTH - labelX - rowWidth),
-                           METRIC_ROW_HEIGHT, ST7735_BLACK);
+        uint16_t drawnEnd = (uint16_t)(drawnX + drawnWidth);
+        uint16_t rowEnd = (uint16_t)(labelX + rowWidth);
+
+        if (drawnX < labelX)
+        {
+            lcd_fill_rectangle(drawnX, METRIC_ROW_Y, (uint16_t)(labelX - drawnX),
+                               METRIC_ROW_HEIGHT, ST7735_BLACK);
+        }
+        if (drawnEnd > rowEnd)
+        {
+            lcd_fill_rectangle(rowEnd, METRIC_ROW_Y, (uint16_t)(drawnEnd - rowEnd),
+                               METRIC_ROW_HEIGHT, ST7735_BLACK);
+        }
     }
+    drawnX = labelX;
+    drawnWidth = rowWidth;
     lcd_write_string(labelX, METRIC_ROW_Y, row, Font_11x18, ST7735_WHITE, ST7735_BLACK);
     lcd_display_percentage(barValue, color);
 }
