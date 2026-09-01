@@ -278,7 +278,7 @@ void lcd_display_percentage(uint8_t val, uint16_t color)
 
 void lcd_display_cpuLoad(void)
 {
-    char iPSource[20] = {0};
+    char iPSource[IP_ADDRESS_LENGTH] = {0};
     uint8_t cpuLoad = 0;
     uint8_t cpuStr[10] = {0};
     lcd_fill_screen(ST7735_BLACK);
@@ -288,7 +288,7 @@ void lcd_display_cpuLoad(void)
     if (IP_SWITCH == IP_DISPLAY_OPEN)
     {
         lcd_write_string(0, 0, "IP:", Font_8x16, ST7735_WHITE, ST7735_BLACK);
-        strcpy(iPSource, get_ip_address_new());                                       // Get the IP address of the device's wireless network card
+        get_ip_address_new(iPSource, sizeof(iPSource));                               // Get the IP address of the device's wireless network card
         lcd_write_string(24, 0, iPSource, Font_8x16, ST7735_WHITE, ST7735_BLACK); // Send the IP address to the lower machine
     }
     else

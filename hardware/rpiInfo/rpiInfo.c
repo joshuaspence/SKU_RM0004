@@ -22,92 +22,83 @@
 * Get the IP address of wlan0 or eth0
 */
 
-char* get_ip_address(void)
+/* Shown when no interface carries a usable address. */
+#define IP_UNAVAILABLE "xxx.xxx.xxx.xxx"
+
+/* Copy src into a buffer of the given size, always terminating. */
+static void copy_string(char *buffer, size_t length, const char *src)
+{
+    if (buffer == NULL || length == 0)
+    {
+        return;
+    }
+    strncpy(buffer, src, length - 1);
+    buffer[length - 1] = '\0';
+}
+
+/*
+* Write the IPv4 address of one interface into the caller's buffer.
+* Returns 0 on success, -1 if the interface has no address.
+*/
+static int read_interface_address(const char *interface, char *buffer, size_t length)
 {
     int fd;
     struct ifreq ifr;
-    int symbol=0;
-    if (IPADDRESS_TYPE == ETH0_ADDRESS)
+    const char *address = NULL;
+
+    if (buffer == NULL || length == 0)
     {
-      fd = socket(AF_INET, SOCK_DGRAM, 0);
-      /* I want to get an IPv4 IP address */
-      ifr.ifr_addr.sa_family = AF_INET;
-      /* I want IP address attached to "eth0" */
-      strncpy(ifr.ifr_name, "eth0", IFNAMSIZ-1);
-      symbol=ioctl(fd, SIOCGIFADDR, &ifr);
-      close(fd);
-      if(symbol==0)
-      {
-        return inet_ntoa(((struct sockaddr_in *)&ifr.ifr_addr)->sin_addr);
-      }
-      else
-      {
-        char* buffer="xxx.xxx.xxx.xxx";
-        return buffer;
-      }
+        return -1;
     }
-    else if (IPADDRESS_TYPE == WLAN0_ADDRESS)
+    fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0)
     {
-        fd = socket(AF_INET, SOCK_DGRAM, 0);
-        /* I want to get an IPv4 IP address */
-        ifr.ifr_addr.sa_family = AF_INET;
-        /* I want IP address attached to "wlan0" */
-        strncpy(ifr.ifr_name, "wlan0", IFNAMSIZ-1);
-        symbol=ioctl(fd, SIOCGIFADDR, &ifr);
-        close(fd);    
-        if(symbol==0)
-        {
-          return inet_ntoa(((struct sockaddr_in *)&ifr.ifr_addr)->sin_addr);   
-        }
-        else
-        {
-          char* buffer="xxx.xxx.xxx.xxx";
-          return buffer;
-        }
+        return -1;
     }
-    else
+    memset(&ifr, 0, sizeof(ifr));
+    /* I want to get an IPv4 IP address */
+    ifr.ifr_addr.sa_family = AF_INET;
+    strncpy(ifr.ifr_name, interface, IFNAMSIZ-1);
+    ifr.ifr_name[IFNAMSIZ-1] = '\0';
+    if (ioctl(fd, SIOCGIFADDR, &ifr) != 0)
     {
-      char* buffer="xxx.xxx.xxx.xxx";
-      return buffer;
+        close(fd);
+        return -1;
+    }
+    close(fd);
+
+    /* inet_ntoa returns a pointer to a static buffer that the next call
+       overwrites, so the text is copied out before returning. */
+    address = inet_ntoa(((struct sockaddr_in *)&ifr.ifr_addr)->sin_addr);
+    if (address == NULL)
+    {
+        return -1;
+    }
+    copy_string(buffer, length, address);
+    return 0;
+}
+
+void get_ip_address(char *buffer, size_t length)
+{
+    const char *interface = (IPADDRESS_TYPE == WLAN0_ADDRESS) ? "wlan0" : "eth0";
+
+    if (read_interface_address(interface, buffer, length) != 0)
+    {
+        copy_string(buffer, length, IP_UNAVAILABLE);
     }
 }
 
-char* get_ip_address_new(void)
+void get_ip_address_new(char *buffer, size_t length)
 {
-    int fd;
-    struct ifreq ifr;
-    int symbol=0;
-
-    fd = socket(AF_INET, SOCK_DGRAM, 0);
-    /* I want to get an IPv4 IP address */
-    ifr.ifr_addr.sa_family = AF_INET;
-    /* I want IP address attached to "eth0" */
-    strncpy(ifr.ifr_name, "eth0", IFNAMSIZ-1);
-    symbol=ioctl(fd, SIOCGIFADDR, &ifr);
-    close(fd);
-    if(symbol==0)
+    if (read_interface_address("eth0", buffer, length) == 0)
     {
-      return inet_ntoa(((struct sockaddr_in *)&ifr.ifr_addr)->sin_addr);
+        return;
     }
-    else
+    if (read_interface_address("wlan0", buffer, length) == 0)
     {
-      fd = socket(AF_INET, SOCK_DGRAM, 0);
-      /* I want to get an IPv4 IP address */
-      ifr.ifr_addr.sa_family = AF_INET;
-      /* I want IP address attached to "wlan0" */
-      strncpy(ifr.ifr_name, "wlan0", IFNAMSIZ-1);
-      symbol=ioctl(fd, SIOCGIFADDR, &ifr);
-      close(fd);    
-      if(symbol==0)
-      {
-        return inet_ntoa(((struct sockaddr_in *)&ifr.ifr_addr)->sin_addr);   
-      }
-      else
-      {
-        char* buffer="xxx.xxx.xxx.xxx";
-        return buffer;
-      }
+        return;
     }
+    copy_string(buffer, length, IP_UNAVAILABLE);
 }
 
 
