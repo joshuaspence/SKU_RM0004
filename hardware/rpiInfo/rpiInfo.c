@@ -368,13 +368,20 @@ uint8_t get_hard_disk_memory(uint16_t *diskMemSize, uint16_t *useMemSize)
 uint8_t get_temperature(void)
 {
     FILE *fd;
-    unsigned int temp;
+    unsigned int temp = 0;
     char buff[10] = {0};
     fd = fopen("/sys/class/thermal/thermal_zone0/temp","r");
-    fgets(buff,sizeof(buff),fd);
-    sscanf(buff, "%d", &temp);
+    if (fd == NULL)
+    {
+        return 0;
+    }
+    if (fgets(buff,sizeof(buff),fd) == NULL || sscanf(buff, "%u", &temp) != 1)
+    {
+        fclose(fd);
+        return 0;
+    }
     fclose(fd);
-    return TEMPERATURE_TYPE == FAHRENHEIT ? temp/1000*1.8+32 : temp/1000;    
+    return TEMPERATURE_TYPE == FAHRENHEIT ? temp/1000*1.8+32 : temp/1000;
 }
 
 /*
@@ -394,7 +401,14 @@ uint8_t get_cpu_message(void)
        the summary line, because top prints one %Cpu line per core once its
        SMP view has been toggled on. */
     fp=popen("top -bn1 | grep -m1 '%Cpu' | awk '{printf \"%.2f %.2f\", $(2), $(4)}'","r");    //Gets the load on the CPU
-    fgets(cpuBuff, sizeof(cpuBuff),fp);                                        //Read the user and system CPU load
+    if (fp == NULL)
+    {
+        return 0;
+    }
+    if (fgets(cpuBuff, sizeof(cpuBuff),fp) == NULL)                            //Read the user and system CPU load
+    {
+        cpuBuff[0] = '\0';
+    }
     pclose(fp);
 
     /* Parsed as doubles rather than with atoi(), which truncated each
