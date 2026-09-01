@@ -292,7 +292,11 @@ void lcd_display_percentage(uint8_t val, uint16_t color)
 
 /* The header line, drawn in the 8x16 font above the blue separator. */
 #define HEADER_ROW_Y 0
-#define HEADER_ROW_HEIGHT 20
+/* The 8x16 font fits 19 characters across the 160 pixel display. Padding
+   the header to that width lets one write cover the whole row, so it never
+   has to be blanked first. */
+#define HEADER_TEXT_COLUMNS 19
+#define HEADER_TEXT_MAX (HEADER_TEXT_COLUMNS + 1)
 
 /* The value field is sized for "100", the widest reading any metric
    produces, plus one character for the unit that follows it. */
@@ -349,25 +353,44 @@ static void lcd_display_metric(char *label, uint8_t value, char *unit,
  */
 void lcd_display_header(void)
 {
+    static char drawn[HEADER_TEXT_MAX] = {0};
+    static int painted = 0;
     char message[DISPLAY_MESSAGE_MAX] = {0};
     char iPSource[IP_ADDRESS_LENGTH] = {0};
-
-    lcd_fill_rectangle(0, HEADER_ROW_Y, ST7735_WIDTH, HEADER_ROW_HEIGHT, ST7735_BLACK);
+    char text[HEADER_TEXT_MAX] = {0};
+    char padded[HEADER_TEXT_MAX] = {0};
 
     if (display_message_read(message, sizeof(message)))
     {
-        lcd_write_string(0, HEADER_ROW_Y, message, Font_8x16, ST7735_WHITE, ST7735_BLACK);
+        snprintf(text, sizeof(text), "%s", message);
     }
     else if (IP_SWITCH == IP_DISPLAY_OPEN)
     {
-        lcd_write_string(0, HEADER_ROW_Y, "IP:", Font_8x16, ST7735_WHITE, ST7735_BLACK);
         get_ip_address_new(iPSource, sizeof(iPSource));                               // Get the IP address of the device's wireless network card
-        lcd_write_string(24, HEADER_ROW_Y, iPSource, Font_8x16, ST7735_WHITE, ST7735_BLACK); // Send the IP address to the lower machine
+        snprintf(text, sizeof(text), "IP:%s", iPSource);
     }
     else
     {
-        lcd_write_string(0, HEADER_ROW_Y, CUSTOM_DISPLAY, Font_8x16, ST7735_WHITE, ST7735_BLACK);
+        snprintf(text, sizeof(text), "%s", CUSTOM_DISPLAY);
     }
+
+    /* Nothing to do when the line already says this. Cheap enough to call
+       every refresh, which is what lets an address change be noticed
+       rather than only a message change. */
+    if (painted && strcmp(text, drawn) == 0)
+    {
+        return;
+    }
+    strcpy(drawn, text);
+    painted = 1;
+
+    /* Padded to the full width and written in one pass. lcd_write_char
+       paints the background colour for unset pixels, so the text erases
+       whatever it replaces as it goes. Blanking the row first would leave
+       it empty for as long as the text takes to draw, and at one i2c
+       transaction per pixel that gap is long enough to see. */
+    snprintf(padded, sizeof(padded), "%-*s", HEADER_TEXT_COLUMNS, text);
+    lcd_write_string(0, HEADER_ROW_Y, padded, Font_8x16, ST7735_WHITE, ST7735_BLACK);
 }
 
 void lcd_display_cpuLoad(void)
