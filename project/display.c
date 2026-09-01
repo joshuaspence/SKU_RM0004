@@ -9,9 +9,9 @@ Demo for ssd1306 i2c driver for  Raspberry Pi
 #include "time.h"
 #include <unistd.h>
 
-/* Screens lcd_display() cycles through, and how long each one stays up. */
-#define SCREEN_COUNT 4
-#define SCREEN_DWELL_SECONDS 2
+/* How often the page is refreshed. This also sets the interval the CPU
+   load is averaged over, since that is measured between reads. */
+#define REFRESH_SECONDS 2
 
 static volatile sig_atomic_t running = 1;
 
@@ -23,7 +23,6 @@ static void request_stop(int signum)
 
 int main(void)
 {
-	uint8_t symbol = 0;
 	struct sigaction action;
 	char shown[DISPLAY_MESSAGE_MAX] = {0};
 	char current[DISPLAY_MESSAGE_MAX] = {0};
@@ -40,7 +39,7 @@ int main(void)
 
 	   sa_flags stays zero, so SA_RESTART is off and the sleep below is
 	   interrupted by delivery. A stop therefore takes effect at once
-	   rather than after the current screen finishes its dwell. */
+	   rather than after the current refresh interval elapses. */
 	memset(&action, 0, sizeof(action));
 	action.sa_handler = request_stop;
 	sigaction(SIGTERM, &action, NULL);
@@ -49,27 +48,26 @@ int main(void)
 	sleep(1);
 	while(running)
 	{
-		lcd_display(symbol);
-		/* The header now reflects whatever display-cli had set by the time
-		   the screen was drawn. */
+		/* Every reading is on screen at once, so there is nothing to
+		   rotate through; this repaints whichever of them changed. */
+		lcd_display_page();
+		/* The header reflects whatever display-cli had set by the time the
+		   page was drawn. */
 		display_message_read(shown, sizeof(shown));
 
-		sleep(SCREEN_DWELL_SECONDS);
+		sleep(REFRESH_SECONDS);
 		if(!running)
 		{
 			break;
 		}
 
-		/* Pick up a change without waiting for the rotation to reach the
-		   screen that repaints in full. Only the header is redrawn, so the
-		   reading currently on display is left alone. */
+		/* Only the header is redrawn on a message change, so the readings
+		   on display are left alone. */
 		display_message_read(current, sizeof(current));
 		if(strcmp(current, shown) != 0)
 		{
 			lcd_display_header();
 		}
-
-		symbol = (uint8_t)((symbol + 1) % SCREEN_COUNT);
 	}
 
 	lcd_fill_screen(ST7735_BLACK);
