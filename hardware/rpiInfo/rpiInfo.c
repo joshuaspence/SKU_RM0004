@@ -442,49 +442,89 @@ uint8_t get_temperature(void)
     return TEMPERATURE_TYPE == FAHRENHEIT ? temp/1000*1.8+32 : temp/1000;
 }
 
+/* Percentage of busy jiffies out of total, rounded to nearest. */
+static uint8_t busy_percent(uint64_t busy, uint64_t total)
+{
+    if (total == 0 || busy > total)
+    {
+        return 0;
+    }
+    return (uint8_t)((busy * 100 + total / 2) / total);
+}
+
 /*
 * Get cpu usage
+*
+* Read straight from /proc/stat rather than by running top(1). The counters
+* there are cumulative jiffy totals since boot, so the load over an interval
+* is the proportion of non-idle jiffies accumulated between two reads. That
+* is what top itself computes, without the cost of forking a shell, top,
+* grep and awk on every sample, and without depending on top's output
+* format, column order or locale.
+*
+* The previous reading is kept in statics; this is called from a single
+* thread.
 */
 uint8_t get_cpu_message(void)
 {
-    FILE * fp;
-    char cpuBuff[64] = {0};
-    double usCpu = 0.0;
-    double syCpu = 0.0;
-    double load = 0.0;
+    static uint64_t prevTotal = 0;
+    static uint64_t prevIdle = 0;
+    FILE *fp = NULL;
+    char line[512];
+    unsigned long long field[10] = {0};
+    uint64_t total = 0;
+    uint64_t idle = 0;
+    uint64_t totalDelta = 0;
+    uint64_t idleDelta = 0;
+    int count = 0;
+    int index = 0;
 
-    /* A single top run yields both figures. Two runs sampled the CPU at
-       different moments, so their results did not describe the same
-       instant and adding them together was not meaningful. -m1 keeps only
-       the summary line, because top prints one %Cpu line per core once its
-       SMP view has been toggled on. */
-    fp=popen("top -bn1 | grep -m1 '%Cpu' | awk '{printf \"%.2f %.2f\", $(2), $(4)}'","r");    //Gets the load on the CPU
+    fp = fopen("/proc/stat", "r");
     if (fp == NULL)
     {
         return 0;
     }
-    if (fgets(cpuBuff, sizeof(cpuBuff),fp) == NULL)                            //Read the user and system CPU load
+    if (fgets(line, sizeof(line), fp) == NULL)
     {
-        cpuBuff[0] = '\0';
+        fclose(fp);
+        return 0;
     }
-    pclose(fp);
+    fclose(fp);
 
-    /* Parsed as doubles rather than with atoi(), which truncated each
-       figure before they were summed: 4.9% user plus 4.9% system reported
-       8% instead of 10%. The old 5-byte buffers could not hold "100.00"
-       either, so a fully loaded CPU was cut down to "100." */
-    if (sscanf(cpuBuff, "%lf %lf", &usCpu, &syCpu) != 2)
+    /* The aggregate line: "cpu" then user, nice, system, idle, iowait, irq,
+       softirq, steal, guest and guest_nice. Older kernels publish fewer of
+       them, so however many are present is however many we total. */
+    count = sscanf(line, "cpu %llu %llu %llu %llu %llu %llu %llu %llu %llu %llu",
+                   &field[0], &field[1], &field[2], &field[3], &field[4],
+                   &field[5], &field[6], &field[7], &field[8], &field[9]);
+    if (count < 4)
     {
         return 0;
     }
-    load = usCpu + syCpu;
-    if (load < 0.0)
+    for (index = 0; index < count; index++)
     {
-        load = 0.0;
+        total += (uint64_t)field[index];
     }
-    if (load > 100.0)
+    /* Time spent waiting on I/O is not the CPU doing work. */
+    idle = (uint64_t)field[3] + (count > 4 ? (uint64_t)field[4] : 0);
+
+    if (prevTotal != 0 && total > prevTotal)
     {
-        load = 100.0;
+        totalDelta = total - prevTotal;
+        idleDelta = (idle > prevIdle) ? (idle - prevIdle) : 0;
+        prevTotal = total;
+        prevIdle = idle;
+        if (idleDelta >= totalDelta)
+        {
+            return 0;
+        }
+        return busy_percent(totalDelta - idleDelta, totalDelta);
     }
-    return (uint8_t)(load + 0.5);
+
+    /* First call, so there is no interval to measure yet: report the
+       since-boot average for this one reading, which is what top -n1
+       returned anyway. Every later call measures a real interval. */
+    prevTotal = total;
+    prevIdle = idle;
+    return busy_percent(total - idle, total);
 }
