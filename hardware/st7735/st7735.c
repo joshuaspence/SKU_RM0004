@@ -323,10 +323,15 @@ static char headerDrawn[HEADER_TEXT_MAX] = {0};
 static int headerPainted = 0;
 static uint16_t metricDrawnX = 0;
 static uint16_t metricDrawnWidth = 0;
+static uint8_t barDrawnCount = 0;
+static uint16_t barDrawnColor = 0;
+static int barPainted = 0;
+
 static void lcd_display_invalidate(void)
 {
     headerPainted = 0;
     metricDrawnWidth = 0;
+    barPainted = 0;
 }
 
 void lcd_display(uint8_t symbol)
@@ -363,16 +368,24 @@ void lcd_display_percentage(uint8_t val, uint16_t color)
         bars = BAR_SEGMENTS;
     }
 
-    for (count = 0; count < bars; count++)
+    /* Repaint only the segments whose colour actually changes. Every
+       segment is its own address window and burst, so redrawing all ten
+       cost about a third of a screen change to alter a handful of them.
+       The unlit tail is usually already grey and stays that way. */
+    for (count = 0; count < BAR_SEGMENTS; count++)
     {
-        lcd_fill_rectangle(xCoordinate, 60, 6, 10, color);
+        uint16_t wanted = (count < bars) ? color : ST7735_GRAY;
+        uint16_t shown = (count < barDrawnCount) ? barDrawnColor : ST7735_GRAY;
+
+        if (!barPainted || wanted != shown)
+        {
+            lcd_fill_rectangle(xCoordinate, 60, 6, 10, wanted);
+        }
         xCoordinate += 10;
     }
-    for (count = 0; count < BAR_SEGMENTS - bars; count++)
-    {
-        lcd_fill_rectangle(xCoordinate, 60, 6, 10, ST7735_GRAY);
-        xCoordinate += 10;
-    }
+    barDrawnCount = bars;
+    barDrawnColor = color;
+    barPainted = 1;
 }
 
 /* The value field is sized for "100", the widest reading any metric
