@@ -383,20 +383,36 @@ uint8_t get_temperature(void)
 uint8_t get_cpu_message(void)
 {
     FILE * fp;
-    uint8_t usCpuBuff[5] = {0};
-    uint8_t syCpubuff[5] = {0};
-    int usCpu = 0;
-    int syCpu = 0;
+    char cpuBuff[64] = {0};
+    double usCpu = 0.0;
+    double syCpu = 0.0;
+    double load = 0.0;
 
-    fp=popen("top -bn1 | grep %Cpu | awk '{printf \"%.2f\", $(2)}'","r");    //Gets the load on the CPU
-    fgets(usCpuBuff, sizeof(usCpuBuff),fp);                                    //Read the user CPU load
-    pclose(fp);    
+    /* A single top run yields both figures. Two runs sampled the CPU at
+       different moments, so their results did not describe the same
+       instant and adding them together was not meaningful. -m1 keeps only
+       the summary line, because top prints one %Cpu line per core once its
+       SMP view has been toggled on. */
+    fp=popen("top -bn1 | grep -m1 '%Cpu' | awk '{printf \"%.2f %.2f\", $(2), $(4)}'","r");    //Gets the load on the CPU
+    fgets(cpuBuff, sizeof(cpuBuff),fp);                                        //Read the user and system CPU load
+    pclose(fp);
 
-    fp=popen("top -bn1 | grep %Cpu | awk '{printf \"%.2f\", $(4)}'","r");    //Gets the load on the CPU
-    fgets(syCpubuff, sizeof(syCpubuff),fp);                                    //Read the system CPU load
-    pclose(fp);   
-    usCpu = atoi(usCpuBuff);
-    syCpu = atoi(syCpubuff);
-    return usCpu+syCpu;
-  
+    /* Parsed as doubles rather than with atoi(), which truncated each
+       figure before they were summed: 4.9% user plus 4.9% system reported
+       8% instead of 10%. The old 5-byte buffers could not hold "100.00"
+       either, so a fully loaded CPU was cut down to "100." */
+    if (sscanf(cpuBuff, "%lf %lf", &usCpu, &syCpu) != 2)
+    {
+        return 0;
+    }
+    load = usCpu + syCpu;
+    if (load < 0.0)
+    {
+        load = 0.0;
+    }
+    if (load > 100.0)
+    {
+        load = 100.0;
+    }
+    return (uint8_t)(load + 0.5);
 }
