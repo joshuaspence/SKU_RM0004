@@ -290,18 +290,9 @@ void lcd_display_percentage(uint8_t val, uint16_t color)
     }
 }
 
-/* The header line, drawn in the 8x16 font above the blue separator. The
-   cleared height is exactly the font's, so it never reaches the
-   separator below it. */
+/* The header line, drawn in the 8x16 font above the blue separator. */
 #define HEADER_ROW_Y 0
-#define HEADER_ROW_HEIGHT 16
-
-/* Degree unit shown alongside a temperature. */
-#if TEMPERATURE_TYPE == FAHRENHEIT
-#define TEMPERATURE_UNIT "F"
-#else
-#define TEMPERATURE_UNIT "C"
-#endif
+#define HEADER_ROW_HEIGHT 20
 
 /* The value field is sized for "100", the widest reading any metric
    produces, plus one character for the unit that follows it. */
@@ -389,79 +380,58 @@ void lcd_display_cpuLoad(void)
     lcd_display_metric("CPU:", cpuLoad, "%", cpuLoad, ST7735_GREEN);
 }
 
-/* Proportion of memory in use, 0-100. */
-static uint8_t read_ram_percent(void)
+void lcd_display_ram(void)
 {
     float Totalram = 0.0;
     float freeram = 0.0;
+    uint8_t residue = 0;
 
     get_cpu_memory(&Totalram, &freeram);
     /* get_cpu_memory() leaves the total at zero if /proc/meminfo cannot be
        read. Dividing by it yields NaN, and converting NaN to an integer is
        undefined behaviour rather than a harmless zero. */
-    if (Totalram <= 0.0)
+    if (Totalram > 0.0)
     {
-        return 0;
+        residue = (Totalram - freeram) / Totalram * 100;
     }
-    return (uint8_t)((Totalram - freeram) / Totalram * 100);
-}
-
-/* Proportion of disk space in use, 0-100. */
-static uint8_t read_disk_percent(void)
-{
-    uint64_t totalBytes = 0;
-    uint64_t usedBytes = 0;
-    uint64_t availBytes = 0;
-    uint64_t denominator = 0;
-
-    /* Totalled in bytes rather than whole GiB so that rounding each
-       filesystem down no longer skews the percentage on small cards. */
-    if (get_disk_usage(&totalBytes, &usedBytes, &availBytes) <= 0)
-    {
-        return 0;
-    }
-    /* df's Use%: used space over the space actually usable, rounded up the
-       same way df rounds it, so the two agree. */
-    denominator = usedBytes + availBytes;
-    if (denominator == 0)
-    {
-        return 0;
-    }
-    return (uint8_t)((usedBytes * 100 + denominator - 1) / denominator);
-}
-
-/*
-* Map a temperature onto the 0-100 scale the bars use. A Fahrenheit
-* reading is converted back first; the guard is there because a
-* sub-freezing reading would otherwise wrap round on an unsigned type.
-*/
-static uint8_t temperature_bar_value(uint8_t temp)
-{
-    if (TEMPERATURE_TYPE == FAHRENHEIT)
-    {
-        return (temp > 32) ? (uint8_t)((temp - 32) / 1.8) : 0;
-    }
-    return temp;
-}
-
-void lcd_display_ram(void)
-{
-    uint8_t residue = read_ram_percent();
-
     lcd_display_metric("RAM:", residue, "%", residue, ST7735_YELLOW);
 }
 
 void lcd_display_temp(void)
 {
     uint8_t temp = get_temperature();
+    uint8_t barValue = temp;
 
-    lcd_display_metric("TEMP:", temp, TEMPERATURE_UNIT,
-                       temperature_bar_value(temp), ST7735_RED);
+    /* The bar is a 0-100 scale, so a Fahrenheit reading drives it only
+       after being converted back. Guarded because a sub-freezing reading
+       would otherwise wrap round on an unsigned type. */
+    if (TEMPERATURE_TYPE == FAHRENHEIT)
+    {
+        barValue = (temp > 32) ? (uint8_t)((temp - 32) / 1.8) : 0;
+    }
+    lcd_display_metric("TEMP:", temp, TEMPERATURE_TYPE == FAHRENHEIT ? "F" : "C",
+                       barValue, ST7735_RED);
 }
 
 void lcd_display_disk(void)
 {
-    uint8_t residue = read_disk_percent();
+    uint64_t totalBytes = 0;
+    uint64_t usedBytes = 0;
+    uint64_t availBytes = 0;
+    uint64_t denominator = 0;
+    uint8_t residue = 0;
 
+    /* Totalled in bytes rather than whole GiB so that rounding each
+       filesystem down no longer skews the percentage on small cards. */
+    if (get_disk_usage(&totalBytes, &usedBytes, &availBytes) > 0)
+    {
+        /* df's Use%: used space over the space actually usable, rounded up
+           the same way df rounds it, so the two agree. */
+        denominator = usedBytes + availBytes;
+        if (denominator > 0)
+        {
+            residue = (uint8_t)((usedBytes * 100 + denominator - 1) / denominator);
+        }
+    }
     lcd_display_metric("DISK:", residue, "%", residue, ST7735_BLUE);
 }
