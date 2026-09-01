@@ -307,36 +307,48 @@ void lcd_display_percentage(uint8_t val, uint16_t color)
 /*
  * Draw one metric row, "LABEL:value unit", with its bar graph beneath.
  *
- * The three x positions are derived from the label rather than tabulated.
- * That derivation is exactly how the four per-metric functions arrived at
- * their hand-written constants: size the row for the label, three digits
- * and a one-character unit, then centre it. Computing it means a label of
- * a different length lands correctly instead of needing a fresh set of
- * magic numbers worked out by hand.
+ * The row is built as a single string and written in one pass, rather than
+ * blanked and then filled with three separate writes. lcd_write_char
+ * paints the background colour for unset pixels, so the text erases what
+ * it replaces as it goes; blanking first leaves the row empty for as long
+ * as the text takes to draw, which at one i2c transaction per pixel shows
+ * as a flicker on every screen change.
+ *
+ * Left-aligning the reading in a field of METRIC_VALUE_DIGITS is what puts
+ * the unit at a fixed offset, so the row lands on exactly the pixels the
+ * three separate writes used to land on.
+ *
+ * The width is still derived from the label rather than tabulated, which
+ * is how the four per-metric functions arrived at their hand-written
+ * constants: size the row for the label, three digits and a one-character
+ * unit, then centre it.
  */
 static void lcd_display_metric(char *label, uint8_t value, char *unit,
                                uint8_t barValue, uint16_t color)
 {
-    char valueStr[8] = {0};
+    char row[24] = {0};
     uint16_t charWidth = Font_11x18.width;
-    uint16_t labelLen = (uint16_t)strlen(label);
-    uint16_t rowWidth = (uint16_t)((labelLen + METRIC_VALUE_DIGITS + 1) * charWidth);
+    uint16_t rowWidth = 0;
     uint16_t labelX = 0;
-    uint16_t valueX = 0;
-    uint16_t unitX = 0;
 
+    snprintf(row, sizeof(row), "%s%-*u%s", label, METRIC_VALUE_DIGITS, value, unit);
+    rowWidth = (uint16_t)(strlen(row) * charWidth);
     if (rowWidth < ST7735_WIDTH)
     {
         labelX = (uint16_t)((ST7735_WIDTH - rowWidth) / 2);
     }
-    valueX = (uint16_t)(labelX + labelLen * charWidth);
-    unitX = (uint16_t)(valueX + METRIC_VALUE_DIGITS * charWidth);
 
-    snprintf(valueStr, sizeof(valueStr), "%u", value);
-    lcd_fill_rectangle(0, METRIC_ROW_Y, ST7735_WIDTH, METRIC_ROW_HEIGHT, ST7735_BLACK);
-    lcd_write_string(labelX, METRIC_ROW_Y, label, Font_11x18, ST7735_WHITE, ST7735_BLACK);
-    lcd_write_string(valueX, METRIC_ROW_Y, valueStr, Font_11x18, ST7735_WHITE, ST7735_BLACK);
-    lcd_write_string(unitX, METRIC_ROW_Y, unit, Font_11x18, ST7735_WHITE, ST7735_BLACK);
+    /* Only the margins are cleared, for when a wider row preceded this
+       one. They hold nothing but background, so black over black is
+       invisible and costs no perceptible time. */
+    if (labelX > 0)
+    {
+        lcd_fill_rectangle(0, METRIC_ROW_Y, labelX, METRIC_ROW_HEIGHT, ST7735_BLACK);
+        lcd_fill_rectangle((uint16_t)(labelX + rowWidth), METRIC_ROW_Y,
+                           (uint16_t)(ST7735_WIDTH - labelX - rowWidth),
+                           METRIC_ROW_HEIGHT, ST7735_BLACK);
+    }
+    lcd_write_string(labelX, METRIC_ROW_Y, row, Font_11x18, ST7735_WHITE, ST7735_BLACK);
     lcd_display_percentage(barValue, color);
 }
 
