@@ -21,6 +21,11 @@
 
 int i2cd = -1;
 
+/* Burst helpers, defined with the rest of the i2c code further down. */
+static void i2c_burst_begin(void);
+static void i2c_burst_end(void);
+static void i2c_burst_repeat(const uint8_t *pattern, uint32_t patternLength, uint32_t total);
+
 /*
  * Set display coordinates
  */
@@ -137,7 +142,7 @@ void lcd_write_str(uint16_t x, uint16_t y, char *str, FontType font, uint16_t co
  */
 void lcd_fill_rectangle(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t color)
 {
-    uint8_t buff[320] = {0};
+    uint8_t buff[BURST_MAX_LENGTH];
     uint16_t count = 0;
     // clipping
     if ((x >= ST7735_WIDTH) || (y >= ST7735_HEIGHT))
@@ -148,15 +153,21 @@ void lcd_fill_rectangle(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint16_t
         h = ST7735_HEIGHT - y;
     lcd_set_address_window(x, y, x + w - 1, y + h - 1);
 
-    for (count = 0; count < w; count++)
+    /* A solid fill is the same two bytes over and over, so one buffer of
+       the pattern serves the whole rectangle however large it is. */
+    for (count = 0; count < BURST_MAX_LENGTH / 2; count++)
     {
         buff[count * 2] = color >> 8;
         buff[count * 2 + 1] = color & 0xFF;
     }
-    for (y = h; y > 0; y--)
-    {
-        i2c_burst_transfer(buff, sizeof(uint16_t) * w);
-    }
+
+    /* One burst session for the whole rectangle rather than one per row.
+       Re-entering burst mode each row cost three commands and a delay
+       every time, which for a small rectangle came to more than the pixel
+       data: a 6x10 bar segment took 44 writes to send 60 pixels. */
+    i2c_burst_begin();
+    i2c_burst_repeat(buff, sizeof(buff), (uint32_t)w * (uint32_t)h * 2);
+    i2c_burst_end();
 }
 
 /*
@@ -223,26 +234,59 @@ void i2c_write_command(uint8_t command, uint8_t high, uint8_t low)
     usleep(10);
 }
 
-void i2c_burst_transfer(uint8_t *buff, uint32_t length)
+/*
+ * Burst mode, split so that several transfers can share one session.
+ * Entering and leaving costs three commands and their delays, which for a
+ * small transfer is more than the pixel data itself.
+ */
+static void i2c_burst_begin(void)
 {
-    uint32_t count = 0;
     i2c_write_command(BURST_WRITE_REG, 0x00, 0x01);
-    while (length > count)
-    {
-        if ((length - count) > BURST_MAX_LENGTH)
-        {
-            write(i2cd, buff + count, BURST_MAX_LENGTH);
-            count += BURST_MAX_LENGTH;
-        }
-        else
-        {
-            write(i2cd, buff + count, length - count);
-            count += (length - count);
-        }
-        usleep(700);
-    }
+}
+
+static void i2c_burst_end(void)
+{
     i2c_write_command(BURST_WRITE_REG, 0x00, 0x00);
     i2c_write_command(SYNC_REG, 0x00, 0x01);
+}
+
+static void i2c_burst_chunks(const uint8_t *buff, uint32_t length)
+{
+    uint32_t count = 0;
+    while (length > count)
+    {
+        uint32_t chunk = (length - count > BURST_MAX_LENGTH)
+                             ? BURST_MAX_LENGTH
+                             : (length - count);
+        write(i2cd, buff + count, chunk);
+        count += chunk;
+        usleep(700);
+    }
+}
+
+/*
+ * Send `total` bytes by repeating a pattern buffer.
+ *
+ * Used for solid fills, where every chunk carries the same bytes. Both the
+ * pattern length and the total are whole numbers of pixels, so repeating
+ * the buffer never splits a pixel across two chunks.
+ */
+static void i2c_burst_repeat(const uint8_t *pattern, uint32_t patternLength, uint32_t total)
+{
+    while (total > 0)
+    {
+        uint32_t chunk = (total > patternLength) ? patternLength : total;
+        write(i2cd, pattern, chunk);
+        total -= chunk;
+        usleep(700);
+    }
+}
+
+void i2c_burst_transfer(uint8_t *buff, uint32_t length)
+{
+    i2c_burst_begin();
+    i2c_burst_chunks(buff, length);
+    i2c_burst_end();
 }
 
 void lcd_display(uint8_t symbol)
