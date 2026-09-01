@@ -24,6 +24,7 @@
 
 char* get_ip_address(void);
 char* get_ip_address_new(void);
+int get_disk_usage(uint64_t *totalBytes, uint64_t *usedBytes, uint64_t *availBytes);
 void get_sd_memory(uint32_t *MemSize, uint32_t *freesize);
 void get_cpu_memory(float *Totalram, float *freeram);
 uint8_t get_temperature(void);

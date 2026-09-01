@@ -345,23 +345,26 @@ void lcd_display_temp(void)
 void lcd_display_disk(void)
 {
 
-    uint16_t diskMemSize = 0;
-    uint16_t diskUseMemSize = 0;
-    uint32_t sdMemSize = 0;
-    uint32_t sdUseMemSize = 0;
-
-    uint16_t memTotal = 0;
-    uint16_t useMemTotal = 0;
+    uint64_t totalBytes = 0;
+    uint64_t usedBytes = 0;
+    uint64_t availBytes = 0;
+    uint64_t denominator = 0;
     uint16_t residue = 0;
     uint8_t residueStr[10] = {0};
 
-    get_sd_memory(&sdMemSize, &sdUseMemSize);
-    get_hard_disk_memory(&diskMemSize, &diskUseMemSize);
-
-    memTotal = sdMemSize + diskMemSize;
-    useMemTotal = sdUseMemSize + diskUseMemSize;
-    residue = useMemTotal * 1.0 / memTotal * 100;
-    sprintf(residueStr, "%d", residue);
+    /* Totalled in bytes rather than whole GiB so that rounding each
+       filesystem down no longer skews the percentage on small cards. */
+    if (get_disk_usage(&totalBytes, &usedBytes, &availBytes) > 0)
+    {
+        /* df's Use%: used space over the space actually usable, rounded up
+           the same way df rounds it, so the two agree. */
+        denominator = usedBytes + availBytes;
+        if (denominator > 0)
+        {
+            residue = (uint16_t)((usedBytes * 100 + denominator - 1) / denominator);
+        }
+    }
+    sprintf(residueStr, "%u", residue);
 
     lcd_fill_rectangle(0, 35, ST7735_WIDTH, 20, ST7735_BLACK);
     lcd_write_string(30, 35, "DISK:", Font_11x18, ST7735_WHITE, ST7735_BLACK);

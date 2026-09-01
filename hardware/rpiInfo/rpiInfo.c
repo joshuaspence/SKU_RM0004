@@ -3,6 +3,7 @@
 #include <string.h>
 #include <sys/sysinfo.h>
 #include <sys/vfs.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
@@ -147,44 +148,203 @@ void get_cpu_memory(float *Totalram,float *freeram)
     }   
 }
 
+/* Upper bound on the number of distinct filesystems we will total up. */
+#define MAX_TRACKED_FS 32
+
+typedef enum
+{
+  DISK_FILTER_ROOT,     /* only the filesystem mounted on "/"                */
+  DISK_FILTER_NON_ROOT, /* every block-device filesystem except that one     */
+  DISK_FILTER_ALL       /* every block-device filesystem                     */
+} DiskFilter;
+
+/*
+* Resolve the device a path lives on, so that two mount entries backed by the
+* same filesystem can be recognised as one.
+*/
+static int get_path_device(const char *path, dev_t *dev)
+{
+  struct stat st;
+  if (stat(path, &st) != 0)
+  {
+    return -1;
+  }
+  *dev = st.st_dev;
+  return 0;
+}
+
+/*
+* Total the capacity, used and available bytes of the mounted filesystems
+* selected by "filter", and return how many were counted (-1 on failure).
+*
+* /proc/mounts is walked instead of shelling out to df: no subprocess is
+* needed, and because each filesystem is de-duplicated by its device id, a
+* filesystem reachable through more than one mount entry is counted once.
+* That is what makes DISK_FILTER_ROOT and DISK_FILTER_NON_ROOT disjoint, and
+* therefore safe for a caller to add together, no matter whether the system
+* boots from an SD card, USB or NVMe.
+*
+* The three byte counts mirror the columns df prints, so that a percentage
+* derived from them agrees with df rather than drifting from it.
+*/
+static int sum_mounts(DiskFilter filter, uint64_t *totalBytes,
+                      uint64_t *usedBytes, uint64_t *availBytes)
+{
+  FILE *fp = NULL;
+  char line[512];
+  char device[256];
+  char mountPoint[256];
+  dev_t seen[MAX_TRACKED_FS];
+  int seenCount = 0;
+  dev_t rootDev = 0;
+  int haveRootDev = 0;
+
+  *totalBytes = 0;
+  *usedBytes = 0;
+  *availBytes = 0;
+
+  haveRootDev = (get_path_device("/", &rootDev) == 0);
+  if (!haveRootDev && filter != DISK_FILTER_ALL)
+  {
+    /* Without knowing which filesystem is the root one we cannot honour a
+       root/non-root split without risking counting it on both sides. */
+    return -1;
+  }
+
+  fp = fopen("/proc/mounts", "r");
+  if (fp == NULL)
+  {
+    return -1;
+  }
+
+  while (fgets(line, sizeof(line), fp) != NULL)
+  {
+    struct statfs fsInfo;
+    uint64_t blockSize = 0;
+    dev_t dev = 0;
+    int duplicate = 0;
+    int index = 0;
+
+    if (sscanf(line, "%255s %255s", device, mountPoint) != 2)
+    {
+      continue;
+    }
+
+    /* Only real block devices hold user data. Loop devices are read-only
+       images (snaps, mounted ISOs) that always read as 100% full, so
+       including them would skew the total. */
+    if (strncmp(device, "/dev/", 5) != 0 ||
+        strncmp(device, "/dev/loop", 9) == 0)
+    {
+      continue;
+    }
+
+    if (get_path_device(mountPoint, &dev) != 0)
+    {
+      continue;
+    }
+
+    if (filter != DISK_FILTER_ALL)
+    {
+      int isRoot = (dev == rootDev);
+      if (isRoot != (filter == DISK_FILTER_ROOT))
+      {
+        continue;
+      }
+    }
+
+    for (index = 0; index < seenCount; index++)
+    {
+      if (seen[index] == dev)
+      {
+        duplicate = 1;
+        break;
+      }
+    }
+    if (duplicate)
+    {
+      continue;
+    }
+    if (seenCount >= MAX_TRACKED_FS)
+    {
+      /* Out of room to remember what has already been counted; skipping is
+         an undercount, whereas counting on would risk a double count. */
+      continue;
+    }
+    seen[seenCount++] = dev;
+
+    if (statfs(mountPoint, &fsInfo) != 0 || fsInfo.f_blocks == 0)
+    {
+      continue;
+    }
+
+    blockSize = (uint64_t)fsInfo.f_bsize;
+    /* "Size", "Used" and "Avail" as df defines them. Used counts the blocks
+       reserved for root, which f_bavail excludes, so used + avail is smaller
+       than the total; that gap is what df's Use% column divides by. */
+    *totalBytes += blockSize * (uint64_t)fsInfo.f_blocks;
+    *usedBytes += blockSize * ((uint64_t)fsInfo.f_blocks - (uint64_t)fsInfo.f_bfree);
+    *availBytes += blockSize * (uint64_t)fsInfo.f_bavail;
+  }
+
+  fclose(fp);
+  return seenCount;
+}
+
+/*
+* Total every mounted block-device filesystem, each counted exactly once.
+*/
+int get_disk_usage(uint64_t *totalBytes, uint64_t *usedBytes, uint64_t *availBytes)
+{
+  return sum_mounts(DISK_FILTER_ALL, totalBytes, usedBytes, availBytes);
+}
+
 /*
 * get sd memory
+*
+* Reports the filesystem mounted on "/", in whole GiB. Note that despite its
+* name "freesize" receives the space in use, which is what callers display.
 */
 void get_sd_memory(uint32_t *MemSize, uint32_t *freesize)
 {
-    struct statfs diskInfo;
-    statfs("/",&diskInfo);
-    unsigned long long blocksize = diskInfo.f_bsize;// The number of bytes per block
-    unsigned long long totalsize = blocksize*diskInfo.f_blocks;//Total number of bytes	
-    *MemSize=(unsigned int)(totalsize>>30);
+    uint64_t totalBytes = 0;
+    uint64_t usedBytes = 0;
+    uint64_t availBytes = 0;
 
+    *MemSize = 0;
+    *freesize = 0;
 
-    unsigned long long size = blocksize*diskInfo.f_bfree; //Now let's figure out how much space we have left
-    *freesize=size>>30;
-    *freesize=*MemSize-*freesize;
+    if (sum_mounts(DISK_FILTER_ROOT, &totalBytes, &usedBytes, &availBytes) <= 0)
+    {
+      return;
+    }
+    *MemSize = (uint32_t)(totalBytes >> 30);
+    *freesize = (uint32_t)(usedBytes >> 30);
 }
 
 
 /*
 * get hard disk memory
+*
+* Reports every block-device filesystem other than the one mounted on "/",
+* in whole GiB, so that it never overlaps with get_sd_memory().
 */
 uint8_t get_hard_disk_memory(uint16_t *diskMemSize, uint16_t *useMemSize)
 {
+  uint64_t totalBytes = 0;
+  uint64_t usedBytes = 0;
+  uint64_t availBytes = 0;
+
   *diskMemSize = 0;
   *useMemSize = 0;
-  uint8_t diskMembuff[10] = {0};
-  uint8_t useMembuff[10] = {0};
-  FILE *fd = NULL;
-  fd=popen("df -l | grep /dev/sda | awk '{printf \"%s\", $(2)}'","r"); 
-  fgets(diskMembuff,sizeof(diskMembuff),fd);
-  fclose(fd);
 
-  fd=popen("df -l | grep /dev/sda | awk '{printf \"%s\", $(3)}'","r"); 
-  fgets(useMembuff,sizeof(useMembuff),fd);
-  fclose(fd);
-
-  *diskMemSize = atoi(diskMembuff)/1024/1024;
-  *useMemSize  = atoi(useMembuff)/1024/1024;
+  if (sum_mounts(DISK_FILTER_NON_ROOT, &totalBytes, &usedBytes, &availBytes) <= 0)
+  {
+    return 0;
+  }
+  *diskMemSize = (uint16_t)(totalBytes >> 30);
+  *useMemSize = (uint16_t)(usedBytes >> 30);
+  return 1;
 }
 
 /*
