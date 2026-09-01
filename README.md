@@ -36,10 +36,12 @@ display-cli --clear             # go back to showing the IP address
 The top line fits 19 characters. Longer messages, and anything outside
 printable ASCII, are trimmed to what the display is able to draw.
 
-The message is kept in `/var/lib/uctronics-display/message` and survives a
-reboot. `deployment_service.sh` makes that directory yours, so `display-cli`
-does not need `sudo`. Set `UCTRONICS_DISPLAY_MESSAGE_FILE` to use a
-different file.
+The message is kept in `/run/uctronics-display/message`. That is a tmpfs, so
+a message lasts until the machine is rebooted and no longer — restarting the
+display service keeps it, restarting the Pi clears it and the IP address
+comes back. `deployment_service.sh` makes the directory yours, so
+`display-cli` does not need `sudo`. Set `UCTRONICS_DISPLAY_MESSAGE_FILE` to
+use a different file.
 
 ## How to uninstall the uctronics-display.service
 
@@ -47,7 +49,8 @@ different file.
 sudo systemctl disable uctronics-display.service
 sudo rm /etc/systemd/system/uctronics-display.service
 sudo rm -f /usr/local/bin/display-cli
-sudo rm -rf /var/lib/uctronics-display
+sudo rm -f /etc/tmpfiles.d/uctronics-display.conf
+sudo rm -rf /run/uctronics-display
 sudo systemctl daemon-reload
 ```
 ## How to use NVMe 

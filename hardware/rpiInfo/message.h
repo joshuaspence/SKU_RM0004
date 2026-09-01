@@ -16,10 +16,21 @@
 /* The 8x16 font fits 19 characters across the 160 pixel display. */
 #define DISPLAY_MESSAGE_MAX 20
 
-/* Where the message lives. Overridable, mainly so this can be exercised
-   without writing to a system directory. */
+/* Where the message lives.
+ *
+ * /run is a tmpfs the kernel starts empty on every boot, so a message
+ * lasts as long as the machine is up and no longer. Restarting the display
+ * service keeps it; restarting the machine does not.
+ *
+ * The directory does not survive either, so something has to recreate it
+ * each boot. deployment_service.sh installs a systemd-tmpfiles rule that
+ * does, owned by whoever deployed the service so that setting a message
+ * needs no sudo.
+ *
+ * Overridable, mainly so this can be exercised without writing to a system
+ * directory. */
 #define DISPLAY_MESSAGE_ENV  "UCTRONICS_DISPLAY_MESSAGE_FILE"
-#define DISPLAY_MESSAGE_PATH "/var/lib/uctronics-display/message"
+#define DISPLAY_MESSAGE_PATH "/run/uctronics-display/message"
 
 /* The file currently in use: $UCTRONICS_DISPLAY_MESSAGE_FILE if set,
    DISPLAY_MESSAGE_PATH otherwise. */

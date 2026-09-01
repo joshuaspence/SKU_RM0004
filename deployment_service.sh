@@ -6,7 +6,9 @@ service_name="uctronics-display.service"
 exe_path=$(pwd)/"display"
 cli_path=$(pwd)/"display-cli"
 cli_link="/usr/local/bin/display-cli"
-message_dir="/var/lib/uctronics-display"
+message_dir="/run/uctronics-display"
+tmpfiles_conf="/etc/tmpfiles.d/uctronics-display.conf"
+old_message_dir="/var/lib/uctronics-display"
 
 version=$(cat /etc/os-release | grep "VERSION_ID" | awk -F= '{print $2}' | tr -d '"')
 MODEL=$(cat /proc/device-tree/model)
@@ -43,13 +45,24 @@ install_display_cli() {
     echo Put display-cli on the PATH at "$cli_link".
     sudo ln -sf "$cli_path" "$cli_link"
 
-    # The display only ever reads the message file, and root can read
-    # anything, so this directory belongs to whoever deployed the service.
-    # That is what lets display-cli be run without sudo.
+    # The message lives under /run so that it is gone after a reboot. That
+    # is a tmpfs, so the directory goes too and something has to put it
+    # back on each boot: systemd-tmpfiles is what does that.
+    #
+    # It is owned by whoever deployed the service rather than by root. The
+    # display only ever reads the file and root can read anything, so there
+    # is nothing to gain from root owning it, and user ownership is what
+    # lets display-cli run without sudo.
     owner=${SUDO_USER:-$(id -un)}
-    sudo mkdir -p "$message_dir"
-    sudo chown "$owner" "$message_dir"
-    echo "$message_dir" is owned by "$owner"; display-cli needs no sudo.
+    echo "d $message_dir 0755 $owner $(id -gn "$owner") -" | sudo tee "$tmpfiles_conf" >/dev/null
+    sudo systemd-tmpfiles --create "$tmpfiles_conf"
+    echo "$message_dir" is owned by "$owner", and cleared on every boot.
+
+    # Earlier versions kept it under /var/lib, where it survived reboots.
+    if [ -d "$old_message_dir" ]; then
+        echo Removing "$old_message_dir", which no longer holds the message.
+        sudo rm -rf "$old_message_dir"
+    fi
 }
 
 install_service() {
