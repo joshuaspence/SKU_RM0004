@@ -18,7 +18,7 @@
 #include <fcntl.h>
 #include "rpiInfo.h"
 
-int i2cd;
+int i2cd = -1;
 
 /*
  * Set display coordinates
@@ -178,11 +178,8 @@ void lcd_draw_image(uint16_t x, uint16_t y, uint16_t w, uint16_t h, uint8_t *dat
 
 uint8_t lcd_begin(void)
 {
-    uint8_t count = 0;
-    uint8_t buffer[20] = {0};
-    uint8_t i2c[20] = "/dev/i2c-1";
     // I2C Init
-    i2cd = open(i2c, O_RDWR); //"/dev/i2c-1"
+    i2cd = open("/dev/i2c-1", O_RDWR);
     if (i2cd < 0)
     {
         fprintf(stderr, "Device I2C-1 failed to initialize\n");
@@ -190,9 +187,25 @@ uint8_t lcd_begin(void)
     }
     if (ioctl(i2cd, I2C_SLAVE_FORCE, I2C_ADDRESS) < 0)
     {
+        fprintf(stderr, "Device I2C-1 failed to select address 0x%02X\n", I2C_ADDRESS);
+        close(i2cd);
+        i2cd = -1;
         return 1;
     }
     return 0;
+}
+
+/*
+ * Release the i2c descriptor. Safe to call whether or not lcd_begin()
+ * succeeded, and safe to call more than once.
+ */
+void lcd_end(void)
+{
+    if (i2cd >= 0)
+    {
+        close(i2cd);
+        i2cd = -1;
+    }
 }
 
 void i2c_write_data(uint8_t high, uint8_t low)
