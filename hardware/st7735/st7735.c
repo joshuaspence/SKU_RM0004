@@ -17,6 +17,7 @@
 #include <linux/i2c-dev.h>
 #include <fcntl.h>
 #include "rpiInfo.h"
+#include "message.h"
 
 int i2cd = -1;
 
@@ -289,6 +290,10 @@ void lcd_display_percentage(uint8_t val, uint16_t color)
     }
 }
 
+/* The header line, drawn in the 8x16 font above the blue separator. */
+#define HEADER_ROW_Y 0
+#define HEADER_ROW_HEIGHT 20
+
 /* The value field is sized for "100", the widest reading any metric
    produces, plus one character for the unit that follows it. */
 #define METRIC_VALUE_DIGITS 3
@@ -331,23 +336,47 @@ static void lcd_display_metric(char *label, uint8_t value, char *unit,
     lcd_display_percentage(barValue, color);
 }
 
+/*
+ * Draw the top line: the message set through display-cli if one is set,
+ * and otherwise the address or fixed string that was shown before.
+ *
+ * Only lcd_display_cpuLoad() repaints the whole screen, so this line
+ * survives the other three screens' partial repaints. That is what lets it
+ * be redrawn on its own when the message changes mid-cycle, rather than
+ * the change waiting for the rotation to come back round. The row is
+ * cleared first, because a shorter message would otherwise leave the tail
+ * of the previous one behind.
+ */
+void lcd_display_header(void)
+{
+    char message[DISPLAY_MESSAGE_MAX] = {0};
+    char iPSource[IP_ADDRESS_LENGTH] = {0};
+
+    lcd_fill_rectangle(0, HEADER_ROW_Y, ST7735_WIDTH, HEADER_ROW_HEIGHT, ST7735_BLACK);
+
+    if (display_message_read(message, sizeof(message)))
+    {
+        lcd_write_string(0, HEADER_ROW_Y, message, Font_8x16, ST7735_WHITE, ST7735_BLACK);
+    }
+    else if (IP_SWITCH == IP_DISPLAY_OPEN)
+    {
+        lcd_write_string(0, HEADER_ROW_Y, "IP:", Font_8x16, ST7735_WHITE, ST7735_BLACK);
+        get_ip_address_new(iPSource, sizeof(iPSource));                               // Get the IP address of the device's wireless network card
+        lcd_write_string(24, HEADER_ROW_Y, iPSource, Font_8x16, ST7735_WHITE, ST7735_BLACK); // Send the IP address to the lower machine
+    }
+    else
+    {
+        lcd_write_string(0, HEADER_ROW_Y, CUSTOM_DISPLAY, Font_8x16, ST7735_WHITE, ST7735_BLACK);
+    }
+}
+
 void lcd_display_cpuLoad(void)
 {
-    char iPSource[IP_ADDRESS_LENGTH] = {0};
     uint8_t cpuLoad = get_cpu_message();
 
     lcd_fill_screen(ST7735_BLACK);
     lcd_fill_rectangle(0, 20, ST7735_WIDTH, 5, ST7735_BLUE);
-    if (IP_SWITCH == IP_DISPLAY_OPEN)
-    {
-        lcd_write_string(0, 0, "IP:", Font_8x16, ST7735_WHITE, ST7735_BLACK);
-        get_ip_address_new(iPSource, sizeof(iPSource));                               // Get the IP address of the device's wireless network card
-        lcd_write_string(24, 0, iPSource, Font_8x16, ST7735_WHITE, ST7735_BLACK); // Send the IP address to the lower machine
-    }
-    else
-    {
-        lcd_write_string(0, 0, CUSTOM_DISPLAY, Font_8x16, ST7735_WHITE, ST7735_BLACK); // Send the IP address to the lower machine
-    }
+    lcd_display_header();
     lcd_display_metric("CPU:", cpuLoad, "%", cpuLoad, ST7735_GREEN);
 }
 

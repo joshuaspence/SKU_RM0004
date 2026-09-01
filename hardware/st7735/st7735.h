@@ -145,6 +145,7 @@ extern void lcd_write_char(uint16_t x, uint16_t y, char ch, FontDef font,uint16_
 extern void lcd_write_ch(uint16_t x, uint16_t y, char ch, FontType font,uint16_t color, uint16_t bgcolor);
 extern void i2c_burst_transfer(uint8_t* buff, uint32_t length);
 extern void lcd_display(uint8_t symbol);
+extern void lcd_display_header(void);
 extern void lcd_display_cpuLoad(void);
 extern void lcd_display_ram(void);
 extern void lcd_display_temp(void);

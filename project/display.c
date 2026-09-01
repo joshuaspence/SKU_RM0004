@@ -5,6 +5,7 @@ Demo for ssd1306 i2c driver for  Raspberry Pi
 #include <string.h>
 #include <signal.h>
 #include "st7735.h"
+#include "message.h"
 #include "time.h"
 #include <unistd.h>
 
@@ -24,6 +25,8 @@ int main(void)
 {
 	uint8_t symbol = 0;
 	struct sigaction action;
+	char shown[DISPLAY_MESSAGE_MAX] = {0};
+	char current[DISPLAY_MESSAGE_MAX] = {0};
 
 	if(lcd_begin())      //LCD Screen initialization
 	{
@@ -47,7 +50,25 @@ int main(void)
 	while(running)
 	{
 		lcd_display(symbol);
+		/* The header now reflects whatever display-cli had set by the time
+		   the screen was drawn. */
+		display_message_read(shown, sizeof(shown));
+
 		sleep(SCREEN_DWELL_SECONDS);
+		if(!running)
+		{
+			break;
+		}
+
+		/* Pick up a change without waiting for the rotation to reach the
+		   screen that repaints in full. Only the header is redrawn, so the
+		   reading currently on display is left alone. */
+		display_message_read(current, sizeof(current));
+		if(strcmp(current, shown) != 0)
+		{
+			lcd_display_header();
+		}
+
 		symbol = (uint8_t)((symbol + 1) % SCREEN_COUNT);
 	}
 
