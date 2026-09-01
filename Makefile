@@ -35,12 +35,22 @@ $(TATGET):$(OBJ)/display.o $(COMMON_OBJS)
 $(CLI_TARGET):$(OBJ)/display_cli.o $(OBJ)/message.o
 	$(CC) -o $@ $^
 
+# -MMD -MP has the compiler record which headers each object used, so that
+# editing a header rebuilds what depends on it. Without this a header
+# change leaves stale objects behind and the binary silently keeps the old
+# value compiled into it.
 $(OBJS) : obj/%.o : %.c
-	$(CC) -c $(INCLUDE) -o $@ $<
+	$(CC) -c $(INCLUDE) -MMD -MP -o $@ $<
+
+-include $(OBJS:.o=.d)
 
 
+# No sudo: make builds these as the invoking user, so removing them needs
+# no more privilege than creating them did. It also failed silently where
+# sudo needs a password and nothing was reading the exit status, which left
+# a "clean" build using objects that were never rebuilt.
 clean:
-	sudo rm -rf $(OBJ)
-	sudo rm -rf $(TATGET) $(CLI_TARGET)
+	rm -rf $(OBJ)
+	rm -rf $(TATGET) $(CLI_TARGET)
 
 .PHONY: all clean

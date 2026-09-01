@@ -1,4 +1,6 @@
 build/
 obj/
 display
+display-cli
 .vscode/
+*.d
