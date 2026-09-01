@@ -276,14 +276,54 @@ void lcd_display_percentage(uint8_t val, uint16_t color)
     }
 }
 
+/* The value field is sized for "100", the widest reading any metric
+   produces, plus one character for the unit that follows it. */
+#define METRIC_VALUE_DIGITS 3
+#define METRIC_ROW_Y 35
+#define METRIC_ROW_HEIGHT 20
+
+/*
+ * Draw one metric row, "LABEL:value unit", with its bar graph beneath.
+ *
+ * The three x positions are derived from the label rather than tabulated.
+ * That derivation is exactly how the four per-metric functions arrived at
+ * their hand-written constants: size the row for the label, three digits
+ * and a one-character unit, then centre it. Computing it means a label of
+ * a different length lands correctly instead of needing a fresh set of
+ * magic numbers worked out by hand.
+ */
+static void lcd_display_metric(char *label, uint8_t value, char *unit,
+                               uint8_t barValue, uint16_t color)
+{
+    char valueStr[8] = {0};
+    uint16_t charWidth = Font_11x18.width;
+    uint16_t labelLen = (uint16_t)strlen(label);
+    uint16_t rowWidth = (uint16_t)((labelLen + METRIC_VALUE_DIGITS + 1) * charWidth);
+    uint16_t labelX = 0;
+    uint16_t valueX = 0;
+    uint16_t unitX = 0;
+
+    if (rowWidth < ST7735_WIDTH)
+    {
+        labelX = (uint16_t)((ST7735_WIDTH - rowWidth) / 2);
+    }
+    valueX = (uint16_t)(labelX + labelLen * charWidth);
+    unitX = (uint16_t)(valueX + METRIC_VALUE_DIGITS * charWidth);
+
+    snprintf(valueStr, sizeof(valueStr), "%u", value);
+    lcd_fill_rectangle(0, METRIC_ROW_Y, ST7735_WIDTH, METRIC_ROW_HEIGHT, ST7735_BLACK);
+    lcd_write_string(labelX, METRIC_ROW_Y, label, Font_11x18, ST7735_WHITE, ST7735_BLACK);
+    lcd_write_string(valueX, METRIC_ROW_Y, valueStr, Font_11x18, ST7735_WHITE, ST7735_BLACK);
+    lcd_write_string(unitX, METRIC_ROW_Y, unit, Font_11x18, ST7735_WHITE, ST7735_BLACK);
+    lcd_display_percentage(barValue, color);
+}
+
 void lcd_display_cpuLoad(void)
 {
     char iPSource[IP_ADDRESS_LENGTH] = {0};
-    uint8_t cpuLoad = 0;
-    uint8_t cpuStr[10] = {0};
+    uint8_t cpuLoad = get_cpu_message();
+
     lcd_fill_screen(ST7735_BLACK);
-    cpuLoad = get_cpu_message();
-    sprintf(cpuStr, "%d", cpuLoad);
     lcd_fill_rectangle(0, 20, ST7735_WIDTH, 5, ST7735_BLUE);
     if (IP_SWITCH == IP_DISPLAY_OPEN)
     {
@@ -295,10 +335,7 @@ void lcd_display_cpuLoad(void)
     {
         lcd_write_string(0, 0, CUSTOM_DISPLAY, Font_8x16, ST7735_WHITE, ST7735_BLACK); // Send the IP address to the lower machine
     }
-    lcd_write_string(36, 35, "CPU:", Font_11x18, ST7735_WHITE, ST7735_BLACK);
-    lcd_write_string(80, 35, cpuStr, Font_11x18, ST7735_WHITE, ST7735_BLACK);
-    lcd_write_string(113, 35, "%", Font_11x18, ST7735_WHITE, ST7735_BLACK);
-    lcd_display_percentage(cpuLoad, ST7735_GREEN);
+    lcd_display_metric("CPU:", cpuLoad, "%", cpuLoad, ST7735_GREEN);
 }
 
 void lcd_display_ram(void)
@@ -306,9 +343,7 @@ void lcd_display_ram(void)
     float Totalram = 0.0;
     float freeram = 0.0;
     uint8_t residue = 0;
-    uint8_t Total[10] = {0};
-    uint8_t free[10] = {0};
-    uint8_t residueStr[10] = {0};
+
     get_cpu_memory(&Totalram, &freeram);
     /* get_cpu_memory() leaves the total at zero if /proc/meminfo cannot be
        read. Dividing by it yields NaN, and converting NaN to an integer is
@@ -317,48 +352,32 @@ void lcd_display_ram(void)
     {
         residue = (Totalram - freeram) / Totalram * 100;
     }
-    sprintf(residueStr, "%d", residue);
-    lcd_fill_rectangle(0, 35, ST7735_WIDTH, 20, ST7735_BLACK);
-    lcd_write_string(36, 35, "RAM:", Font_11x18, ST7735_WHITE, ST7735_BLACK);
-    lcd_write_string(80, 35, residueStr, Font_11x18, ST7735_WHITE, ST7735_BLACK);
-    lcd_write_string(113, 35, "%", Font_11x18, ST7735_WHITE, ST7735_BLACK);
-    lcd_display_percentage(residue, ST7735_YELLOW);
+    lcd_display_metric("RAM:", residue, "%", residue, ST7735_YELLOW);
 }
 
 void lcd_display_temp(void)
 {
-    uint16_t temp = 0;
-    uint8_t tempStr[10] = {0};
-    temp = get_temperature();
-    sprintf(tempStr, "%d", temp);
-    lcd_fill_rectangle(0, 35, ST7735_WIDTH, 20, ST7735_BLACK);
-    lcd_write_string(30, 35, "TEMP:", Font_11x18, ST7735_WHITE, ST7735_BLACK);
-    lcd_write_string(85, 35, tempStr, Font_11x18, ST7735_WHITE, ST7735_BLACK);
+    uint8_t temp = get_temperature();
+    uint8_t barValue = temp;
+
+    /* The bar is a 0-100 scale, so a Fahrenheit reading drives it only
+       after being converted back. Guarded because a sub-freezing reading
+       would otherwise wrap round on an unsigned type. */
     if (TEMPERATURE_TYPE == FAHRENHEIT)
     {
-        lcd_write_string(118, 35, "F", Font_11x18, ST7735_WHITE, ST7735_BLACK);
+        barValue = (temp > 32) ? (uint8_t)((temp - 32) / 1.8) : 0;
     }
-    else
-    {
-        lcd_write_string(118, 35, "C", Font_11x18, ST7735_WHITE, ST7735_BLACK);
-    }
-    if (TEMPERATURE_TYPE == FAHRENHEIT)
-    {
-        temp -= 32;
-        temp /= 1.8;
-    }
-    lcd_display_percentage((uint16_t)temp, ST7735_RED);
+    lcd_display_metric("TEMP:", temp, TEMPERATURE_TYPE == FAHRENHEIT ? "F" : "C",
+                       barValue, ST7735_RED);
 }
 
 void lcd_display_disk(void)
 {
-
     uint64_t totalBytes = 0;
     uint64_t usedBytes = 0;
     uint64_t availBytes = 0;
     uint64_t denominator = 0;
-    uint16_t residue = 0;
-    uint8_t residueStr[10] = {0};
+    uint8_t residue = 0;
 
     /* Totalled in bytes rather than whole GiB so that rounding each
        filesystem down no longer skews the percentage on small cards. */
@@ -369,14 +388,8 @@ void lcd_display_disk(void)
         denominator = usedBytes + availBytes;
         if (denominator > 0)
         {
-            residue = (uint16_t)((usedBytes * 100 + denominator - 1) / denominator);
+            residue = (uint8_t)((usedBytes * 100 + denominator - 1) / denominator);
         }
     }
-    sprintf(residueStr, "%u", residue);
-
-    lcd_fill_rectangle(0, 35, ST7735_WIDTH, 20, ST7735_BLACK);
-    lcd_write_string(30, 35, "DISK:", Font_11x18, ST7735_WHITE, ST7735_BLACK);
-    lcd_write_string(85, 35, residueStr, Font_11x18, ST7735_WHITE, ST7735_BLACK);
-    lcd_write_string(118, 35, "%", Font_11x18, ST7735_WHITE, ST7735_BLACK);
-    lcd_display_percentage(residue, ST7735_BLUE);
+    lcd_display_metric("DISK:", residue, "%", residue, ST7735_BLUE);
 }
