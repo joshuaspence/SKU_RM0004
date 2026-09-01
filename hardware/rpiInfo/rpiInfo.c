@@ -117,35 +117,49 @@ char* get_ip_address_new(void)
 */
 void get_cpu_memory(float *Totalram,float *freeram)
 {
-  struct sysinfo s_info;
-
   unsigned int value=0;
   unsigned char buffer[100]={0};
   unsigned char famer[100]={0};
-    if(sysinfo(&s_info)==0)            //Get memory information
+  float memFree=0.0;
+  int haveAvailable=0;
+
+    FILE* fp=fopen("/proc/meminfo","r");
+    if(fp==NULL)
     {
-        FILE* fp=fopen("/proc/meminfo","r");
-        if(fp==NULL)
+        return ;
+    }
+    while(fgets(buffer,sizeof(buffer),fp))
+    {
+        if(sscanf(buffer,"%s%u",famer,&value)!=2)
         {
-            return ;
+        continue;
         }
-        while(fgets(buffer,sizeof(buffer),fp))
+        if(strcmp(famer,"MemTotal:")==0)
         {
-            if(sscanf(buffer,"%s%u",famer,&value)!=2)
-            {
-            continue;
-            }
-            if(strcmp(famer,"MemTotal:")==0)
-            {
-             *Totalram=value/1000.0/1000.0;
-            }
-            else if(strcmp(famer,"MemFree:")==0)
-            {
-              *freeram=value/1000.0/1000.0;
-            }
+         *Totalram=value/1000.0/1000.0;
         }
-        fclose(fp);    
-    }   
+        /* MemAvailable is the kernel's own estimate of what a new workload
+           could claim without swapping. MemFree is not a substitute: it
+           excludes the reclaimable page cache that Linux deliberately fills
+           with every spare page, so a healthy machine reads as nearly full.
+           On a 32G host MemFree reports 90% used where MemAvailable
+           reports 50%. */
+        else if(strcmp(famer,"MemAvailable:")==0)
+        {
+          *freeram=value/1000.0/1000.0;
+          haveAvailable=1;
+        }
+        else if(strcmp(famer,"MemFree:")==0)
+        {
+          memFree=value/1000.0/1000.0;
+        }
+    }
+    fclose(fp);
+    /* Kernels older than 3.14 do not publish MemAvailable. */
+    if(!haveAvailable)
+    {
+      *freeram=memFree;
+    }
 }
 
 /* Upper bound on the number of distinct filesystems we will total up. */
